@@ -1,0 +1,26 @@
+[package]
+name = "ferropipe-rdp"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust RDP client (MS-RDPBCGR) that carries the session over rdpeudp — no FreeRDP, no IronRDP."
+license = "MIT"
+
+[lib]
+name = "ferropipe_rdp"
+path = "src/lib.rs"
+
+[dependencies]
+bytes = "1"
+thiserror = "2"
+rdpeudp = { path = "../rdpeudp" }
+md4 = "0.10"
+md-5 = "0.10"
+hmac = "0.12"
+rc4 = "0.1"
+sha2 = "0.10"
+rand = "0.8"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+
+[dev-dependencies]
+eframe = "0.36.1"
+egui = "0.36.1"
