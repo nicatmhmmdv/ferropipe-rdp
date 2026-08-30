@@ -173,8 +173,8 @@ impl PduTransport for TlsTransport {
 }
 
 /// Build a permissive rustls client config (RDP certs are self-signed; NLA does
-/// the real authentication).
-fn client_config() -> rustls::ClientConfig {
+/// the real authentication). Shared with the UDP multitransport tunnel.
+pub(crate) fn client_config() -> rustls::ClientConfig {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()

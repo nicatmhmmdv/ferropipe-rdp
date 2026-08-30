@@ -266,7 +266,7 @@ fn decode_surface_bits(codec_id: u16, dest: &Rect16, data: &[u8]) -> Result<Vec<
             }
             Ok(rgba)
         }
-        CODECID_PLANAR => Err(Error::Protocol("EGFX PLANAR codec decoder not yet wired")),
+        CODECID_PLANAR => crate::graphics::planar::decode(data, w, h),
         CODECID_AVC420 | CODECID_AVC444 => Err(Error::Protocol("EGFX H.264 codec requires an external decoder")),
         _ => Err(Error::Protocol("unsupported EGFX codec")),
     }

@@ -48,6 +48,9 @@ pub struct RdpSession {
     #[allow(dead_code)]
     session: Session,
     display: Display,
+    /// The secured UDP multitransport tunnel, once the session has migrated
+    /// graphics onto UDP (via `enable_udp`).
+    udp: Option<crate::udp_tunnel::UdpTunnel>,
 }
 
 impl RdpSession {
@@ -77,12 +80,47 @@ impl RdpSession {
         };
         let session = establish(&mut transport, &cfg)?;
 
-        Ok(RdpSession { transport, session, display: Display::new(params.width as usize, params.height as usize) })
+        Ok(RdpSession {
+            transport,
+            session,
+            display: Display::new(params.width as usize, params.height as usize),
+            udp: None,
+        })
+    }
+
+    /// Migrate graphics onto the UDP multitransport tunnel in response to a server
+    /// Initiate Multitransport Request. `local`/`peer` are the UDP endpoints (the
+    /// peer is normally the server host on the same UDP port). After this, `pump`
+    /// reads graphics from UDP (via `rdpeudp`) instead of the TCP channel.
+    pub fn enable_udp(
+        &mut self,
+        request: &crate::multitransport::InitiateRequest,
+        local: std::net::SocketAddr,
+        peer: std::net::SocketAddr,
+        isn: u32,
+    ) -> Result<()> {
+        let tunnel = crate::udp_tunnel::UdpTunnel::establish(request, local, peer, isn)?;
+        self.udp = Some(tunnel);
+        Ok(())
+    }
+
+    /// Whether graphics are currently carried over UDP.
+    pub fn is_on_udp(&self) -> bool {
+        self.udp.is_some()
     }
 
     /// Process one inbound server frame. Returns true if the framebuffer changed.
+    /// When the UDP tunnel is active, graphics are read from it; otherwise from the
+    /// TCP channel.
     pub fn pump(&mut self) -> Result<bool> {
         self.display.dirty = false;
+        if let Some(tunnel) = &mut self.udp {
+            // Graphics ride the UDP tunnel as tunneled fast-path PDUs.
+            let pdu = tunnel.recv_pdu()?;
+            let updates = parse_output_pdu(&pdu)?;
+            self.display.apply_all(&updates)?;
+            return Ok(self.display.dirty);
+        }
         match self.transport.read_frame()? {
             Frame::FastPath(pdu) => {
                 let updates = parse_output_pdu(&pdu)?;

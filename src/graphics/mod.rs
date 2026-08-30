@@ -4,6 +4,7 @@
 
 pub mod bitmap;
 pub mod fastpath;
+pub mod planar;
 pub mod pointer;
 pub mod framebuffer;
 pub mod rle;
