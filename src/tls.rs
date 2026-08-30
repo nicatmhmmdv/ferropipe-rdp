@@ -112,12 +112,33 @@ impl TlsTransport {
         Ok(())
     }
 
-    /// Read the next post-connection frame: a slow-path TPKT (returns its MCS
-    /// payload) or a fast-path server update PDU.
+    /// Read the next post-connection frame, blocking until one arrives.
     pub fn read_frame(&mut self) -> Result<Frame> {
         let mut first = [0u8; 1];
         self.stream.read_exact(&mut first)?;
-        if first[0] == tpkt::TPKT_VERSION {
+        self.read_frame_body(first[0])
+    }
+
+    /// Poll for the next frame, waiting at most `timeout`. Returns `Ok(None)` if
+    /// no frame arrived in time (the server is quiet), so a caller can interleave
+    /// sending input without blocking.
+    pub fn poll_frame(&mut self, timeout: std::time::Duration) -> Result<Option<Frame>> {
+        self.stream.sock.set_read_timeout(Some(timeout)).ok();
+        let mut first = [0u8; 1];
+        let got = self.stream.read(&mut first);
+        // The rest of a started frame must be read blocking so it isn't torn.
+        self.stream.sock.set_read_timeout(None).ok();
+        match got {
+            Ok(0) => Err(Error::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof))),
+            Ok(_) => Ok(Some(self.read_frame_body(first[0])?)),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => Ok(None),
+            Err(e) => Err(Error::Io(e)),
+        }
+    }
+
+    /// Parse the remainder of a frame given its already-read first byte.
+    fn read_frame_body(&mut self, first: u8) -> Result<Frame> {
+        if first == tpkt::TPKT_VERSION {
             // Slow-path: TPKT header is version, reserved, length(2 BE).
             let mut rest = [0u8; 3];
             self.stream.read_exact(&mut rest)?;
@@ -141,7 +162,7 @@ impl TlsTransport {
             let header_len = 1 + length_bytes.len();
             let mut body = vec![0u8; total.saturating_sub(header_len)];
             self.stream.read_exact(&mut body)?;
-            let mut whole = vec![first[0]];
+            let mut whole = vec![first];
             whole.extend_from_slice(&length_bytes);
             whole.extend_from_slice(&body);
             Ok(Frame::FastPath(whole))

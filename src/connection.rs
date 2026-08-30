@@ -82,6 +82,10 @@ pub fn basic_settings_exchange<T: PduTransport>(
     blocks.extend_from_slice(&client_security_data());
     blocks.extend_from_slice(&client_network_data(&cfg.channels));
     blocks.extend_from_slice(&client_cluster_data());
+    // Advertise reliable UDP multitransport so the server offers a UDP sideband.
+    blocks.extend_from_slice(&crate::gcc::client_multitransport_data(
+        crate::multitransport::TRANSPORTTYPE_UDPFECR | crate::multitransport::TRANSPORTTYPE_UDP_PREFERRED,
+    ));
 
     let ccr = crate::gcc::conference_create_request(&blocks);
     t.send(&connect_initial(&ccr))?;
@@ -144,6 +148,10 @@ pub fn send_client_info<T: PduTransport>(t: &mut T, user_id: u16, cfg: &SessionC
 pub fn wait_for_demand_active<T: PduTransport>(t: &mut T) -> Result<DemandActive> {
     for _ in 0..MAX_SKIP {
         let pdu = recv_on_io(t)?;
+        if std::env::var("FP_DUMP").is_ok() {
+            let head: String = pdu.iter().take(40).map(|b| format!("{b:02x}")).collect();
+            eprintln!("[wait_da] {} bytes: {head}", pdu.len());
+        }
         if let Ok((hdr, body)) = parse_share_control(&pdu) {
             if hdr.pdu_type == PDUTYPE_DEMANDACTIVE {
                 return parse_demand_active(body);

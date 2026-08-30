@@ -60,9 +60,10 @@ impl Default for ClientCoreData {
             client_build: 2600,
             server_selected_protocol: 0,
             // SUPPORT_ERRINFO_PDU | WANT_32BPP_SESSION | SUPPORT_STATUSINFO_PDU
-            // (deliberately NOT advertising DYNVC_GFX so the server uses legacy
-            // fast-path bitmap updates, which the bitmap decoder renders directly)
-            early_capability_flags: 0x0001 | 0x0002 | 0x0004,
+            // | SUPPORT_DYNVC_GFX_PROTOCOL. Modern Windows servers are GFX-mandatory:
+            // without declaring GFX support they reject the (legacy-graphics) Confirm
+            // Active with ERRINFO_BAD_CAPABILITIES, so we must advertise it.
+            early_capability_flags: 0x0001 | 0x0002 | 0x0004 | 0x0100,
         }
     }
 }

@@ -121,15 +121,16 @@ impl RdpSession {
             self.display.apply_all(&updates)?;
             return Ok(self.display.dirty);
         }
-        match self.transport.read_frame()? {
-            Frame::FastPath(pdu) => {
+        match self.transport.poll_frame(std::time::Duration::from_millis(50))? {
+            Some(Frame::FastPath(pdu)) => {
                 let updates = parse_output_pdu(&pdu)?;
                 self.display.apply_all(&updates)?;
             }
-            Frame::SlowPath(_mcs) => {
+            Some(Frame::SlowPath(_mcs)) => {
                 // Slow-path share PDUs (deactivate/reactivate, set-error-info) are
                 // handled in a later refinement; ignored for the graphics path.
             }
+            None => {} // server quiet this cycle
         }
         Ok(self.display.dirty)
     }
