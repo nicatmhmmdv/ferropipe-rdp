@@ -9,9 +9,27 @@ use crate::{Error, Result};
 const CONNECT_INITIAL: u32 = 101;
 const CONNECT_RESPONSE: u32 = 102;
 
+/// BER INTEGER encoded as **unsigned-minimal** (no sign-extension byte). MCS
+/// DomainParameters are `INTEGER(0..MAX)`; real RDP encodes 65535 as `02 02 FF FF`
+/// (which is -1 in signed BER), so an unsigned encoding is what interoperates.
+fn uint(v: u32) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    let mut started = false;
+    for shift in [24u32, 16, 8, 0] {
+        let b = (v >> shift) as u8;
+        if b != 0 || started || shift == 0 {
+            bytes.push(b);
+            started = true;
+        }
+    }
+    let mut out = vec![0x02, bytes.len() as u8];
+    out.extend_from_slice(&bytes);
+    out
+}
+
 /// Encode a DomainParameters SEQUENCE from its eight INTEGER fields.
 fn domain_parameters(vals: [u32; 8]) -> Vec<u8> {
-    let body: Vec<u8> = vals.iter().flat_map(|&v| ber::integer(v)).collect();
+    let body: Vec<u8> = vals.iter().flat_map(|&v| uint(v)).collect();
     ber::sequence(&body)
 }
 

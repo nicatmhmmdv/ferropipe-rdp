@@ -19,37 +19,70 @@ pub struct Display {
     pub cursor_pos: (u16, u16),
     /// Rectangles touched since the last present (for partial-redraw callers).
     pub dirty: bool,
+    /// Reassembly buffer for fragmented updates (FIRST/NEXT/LAST) + its code.
+    frag: Vec<u8>,
+    frag_code: u8,
 }
 
 impl Display {
     pub fn new(width: usize, height: usize) -> Display {
-        Display { framebuffer: Framebuffer::new(width, height), cursor: None, cursor_pos: (0, 0), dirty: false }
+        Display {
+            framebuffer: Framebuffer::new(width, height),
+            cursor: None,
+            cursor_pos: (0, 0),
+            dirty: false,
+            frag: Vec::new(),
+            frag_code: 0,
+        }
     }
 
-    /// Apply one fast-path update. Unknown/soft update types are ignored; a bitmap
-    /// rectangle that fails to decode (e.g. an unsupported codec) is skipped so a
-    /// single bad rect doesn't blank the session.
+    /// Apply one fast-path update, reassembling fragmented ones (a large bitmap
+    /// update spans FIRST/NEXT/LAST fragments) before decoding.
     pub fn apply(&mut self, update: &FastPathUpdate) -> Result<()> {
-        match update.update_code {
+        use crate::graphics::fastpath::{FRAGMENT_FIRST, FRAGMENT_LAST, FRAGMENT_NEXT, FRAGMENT_SINGLE};
+        match update.fragmentation {
+            FRAGMENT_SINGLE => self.process(update.update_code, &update.data.clone()),
+            FRAGMENT_FIRST => {
+                self.frag.clear();
+                self.frag_code = update.update_code;
+                self.frag.extend_from_slice(&update.data);
+                Ok(())
+            }
+            FRAGMENT_NEXT => {
+                self.frag.extend_from_slice(&update.data);
+                Ok(())
+            }
+            FRAGMENT_LAST => {
+                self.frag.extend_from_slice(&update.data);
+                let (code, data) = (self.frag_code, std::mem::take(&mut self.frag));
+                self.process(code, &data)
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Decode + apply a complete (reassembled) update payload.
+    fn process(&mut self, update_code: u8, data: &[u8]) -> Result<()> {
+        match update_code {
             UPDATETYPE_BITMAP => {
-                for rect in parse_bitmap_update(&update.data)? {
+                // A single bad/unsupported rect is skipped so it can't blank the session.
+                for rect in parse_bitmap_update(data)? {
                     if apply_bitmap(&mut self.framebuffer, &rect).is_ok() {
                         self.dirty = true;
                     }
                 }
             }
             UPDATETYPE_COLOR => {
-                self.cursor = Some(decode_color_pointer(&update.data)?);
+                self.cursor = Some(decode_color_pointer(data)?);
                 self.dirty = true;
             }
             UPDATETYPE_POINTER => {
-                self.cursor = Some(decode_new_pointer(&update.data)?);
+                self.cursor = Some(decode_new_pointer(data)?);
                 self.dirty = true;
             }
             UPDATETYPE_PTR_POSITION => {
-                if update.data.len() >= 4 {
-                    self.cursor_pos =
-                        (u16::from_le_bytes([update.data[0], update.data[1]]), u16::from_le_bytes([update.data[2], update.data[3]]));
+                if data.len() >= 4 {
+                    self.cursor_pos = (u16::from_le_bytes([data[0], data[1]]), u16::from_le_bytes([data[2], data[3]]));
                     self.dirty = true;
                 }
             }
@@ -79,6 +112,7 @@ mod tests {
     fn bitmap_update_bytes() -> Vec<u8> {
         // one 1x1 red 16bpp rect at (2,2)
         let mut b = BytesMut::new();
+        b.put_u16_le(1); // updateType = BITMAP
         b.put_u16_le(1); // numberRectangles
         b.put_u16_le(2); // destLeft
         b.put_u16_le(2); // destTop

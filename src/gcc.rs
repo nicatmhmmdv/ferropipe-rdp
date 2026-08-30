@@ -59,7 +59,10 @@ impl Default for ClientCoreData {
             keyboard_layout: 0x0000_0409, // US
             client_build: 2600,
             server_selected_protocol: 0,
-            early_capability_flags: 0x0001, // RNS_UD_CS_SUPPORT_ERRINFO_PDU
+            // SUPPORT_ERRINFO_PDU | WANT_32BPP_SESSION | SUPPORT_STATUSINFO_PDU
+            // (deliberately NOT advertising DYNVC_GFX so the server uses legacy
+            // fast-path bitmap updates, which the bitmap decoder renders directly)
+            early_capability_flags: 0x0001 | 0x0002 | 0x0004,
         }
     }
 }
@@ -67,6 +70,7 @@ impl Default for ClientCoreData {
 impl ClientCoreData {
     pub const VERSION_RDP5: u32 = 0x0008_0004;
     pub const COLOR_8BPP: u16 = 0xCA01;
+    pub const COLOR_16BPP_565: u16 = 0xCA03;
     pub const SAS_DEL: u16 = 0xAA03;
     pub const HIGH_COLOR_24BPP: u16 = 0x0018;
     pub const SUPPORT_ALL_COLOR_DEPTHS: u16 = 0x000F;
@@ -88,7 +92,7 @@ impl ClientCoreData {
         b.put_u16_le(Self::COLOR_8BPP); // postBeta2ColorDepth
         b.put_u16_le(1); // clientProductId
         b.put_u32_le(0); // serialNumber
-        b.put_u16_le(Self::HIGH_COLOR_24BPP); // highColorDepth
+        b.put_u16_le(Self::HIGH_COLOR_24BPP); // highColorDepth = 24bpp
         b.put_u16_le(Self::SUPPORT_ALL_COLOR_DEPTHS); // supportedColorDepths
         b.put_u16_le(self.early_capability_flags);
         b.extend_from_slice(&[0u8; 64]); // clientDigProductId

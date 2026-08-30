@@ -14,6 +14,138 @@ pub const CAPSTYPE_POINTER: u16 = 8;
 pub const CAPSTYPE_SHARE: u16 = 9;
 pub const CAPSTYPE_INPUT: u16 = 13;
 pub const CAPSTYPE_VIRTUALCHANNEL: u16 = 20;
+pub const CAPSTYPE_BITMAPCACHE: u16 = 4;
+pub const CAPSTYPE_CONTROL: u16 = 5;
+pub const CAPSTYPE_ACTIVATION: u16 = 7;
+pub const CAPSTYPE_COLORCACHE: u16 = 10;
+pub const CAPSTYPE_SOUND: u16 = 12;
+pub const CAPSTYPE_FONT: u16 = 14;
+pub const CAPSTYPE_BRUSH: u16 = 15;
+pub const CAPSTYPE_GLYPHCACHE: u16 = 16;
+pub const CAPSTYPE_OFFSCREENCACHE: u16 = 17;
+
+/// TS_CONTROL_CAPABILITYSET (2.2.7.2.2).
+pub fn control_caps() -> Vec<u8> {
+    let mut d = BytesMut::new();
+    d.put_u16_le(0); // controlFlags
+    d.put_u16_le(0); // remoteDetachFlag
+    d.put_u16_le(2); // controlInterest = CONTROLPRIORITY_NEVER
+    d.put_u16_le(2); // detachInterest = CONTROLPRIORITY_NEVER
+    capability_set(CAPSTYPE_CONTROL, &d)
+}
+
+/// TS_WINDOWACTIVATION_CAPABILITYSET (2.2.7.2.3) — all flags off.
+pub fn activation_caps() -> Vec<u8> {
+    capability_set(CAPSTYPE_ACTIVATION, &[0u8; 8])
+}
+
+/// TS_COLORTABLE_CACHE_CAPABILITYSET (2.2.7.1.4).
+pub fn color_cache_caps() -> Vec<u8> {
+    let mut d = BytesMut::new();
+    d.put_u16_le(6); // colorTableCacheSize
+    d.put_u16_le(0); // pad2octets
+    capability_set(CAPSTYPE_COLORCACHE, &d)
+}
+
+/// TS_SOUND_CAPABILITYSET (2.2.7.1.11).
+pub fn sound_caps() -> Vec<u8> {
+    capability_set(CAPSTYPE_SOUND, &[0x01, 0x00, 0x00, 0x00]) // SOUND_BEEPS_FLAG
+}
+
+/// TS_FONT_CAPABILITYSET (2.2.7.2.5).
+pub fn font_caps() -> Vec<u8> {
+    let mut d = BytesMut::new();
+    d.put_u16_le(0x0001); // FONTSUPPORT_FONTLIST
+    d.put_u16_le(0); // pad2octets
+    capability_set(CAPSTYPE_FONT, &d)
+}
+
+/// TS_BRUSH_CAPABILITYSET (2.2.7.1.7) — BRUSH_DEFAULT.
+pub fn brush_caps() -> Vec<u8> {
+    let mut d = BytesMut::new();
+    d.put_u32_le(2); // brushSupportLevel = BRUSH_COLOR_FULL
+    capability_set(CAPSTYPE_BRUSH, &d)
+}
+
+/// TS_GLYPHCACHE_CAPABILITYSET (2.2.7.1.8) — support level NONE (server uses bitmaps).
+pub fn glyph_cache_caps() -> Vec<u8> {
+    let mut d = BytesMut::new();
+    // 10 cache definitions (cacheEntries, cacheMaximumCellSize).
+    for &(entries, cell) in &[
+        (254u16, 4u16), (254, 4), (254, 8), (254, 8), (254, 16), (254, 32), (254, 64), (254, 128), (254, 256), (254, 256),
+    ] {
+        d.put_u16_le(entries);
+        d.put_u16_le(cell);
+    }
+    d.put_u32_le(0x0100_0100); // FragCache
+    d.put_u16_le(0); // GlyphSupportLevel = GLYPH_SUPPORT_NONE
+    d.put_u16_le(0); // pad2octets
+    capability_set(CAPSTYPE_GLYPHCACHE, &d)
+}
+
+/// TS_OFFSCREEN_CAPABILITYSET (2.2.7.1.9) — offscreen caching disabled.
+pub fn offscreen_caps() -> Vec<u8> {
+    let mut d = BytesMut::new();
+    d.put_u32_le(0); // offscreenSupportLevel = FALSE
+    d.put_u16_le(0); // offscreenCacheSize
+    d.put_u16_le(0); // offscreenCacheEntries
+    capability_set(CAPSTYPE_OFFSCREENCACHE, &d)
+}
+
+pub const CAPSTYPE_BITMAPCACHE_REV2: u16 = 19;
+pub const CAPSETTYPE_BITMAP_CODECS: u16 = 29;
+
+/// TS_BITMAPCACHE_CAPABILITYSET_REV2 (2.2.7.1.4.2) — matches what a modern client
+/// sends (the server rejects the legacy rev1 cache cap on RDP 8+ sessions).
+pub fn bitmap_cache_rev2_caps() -> Vec<u8> {
+    // CacheFlags, pad, NumCellCaches=5, 5×CellInfo, 12 bytes pad3 (mstsc/FreeRDP values).
+    let body: [u8; 36] = [
+        0x02, 0x00, 0x00, 0x05, 0x58, 0x02, 0x00, 0x00, 0x58, 0x02, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x10,
+        0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
+    capability_set(CAPSTYPE_BITMAPCACHE_REV2, &body)
+}
+
+/// TS_BITMAPCODECS_CAPABILITYSET (2.2.7.2.10) — advertise codec support with an
+/// empty codec list (bitmapCodecCount = 0), which modern servers expect present.
+pub fn bitmap_codecs_caps() -> Vec<u8> {
+    capability_set(CAPSETTYPE_BITMAP_CODECS, &[0x00])
+}
+
+pub const CAPSETTYPE_MULTIFRAGMENTUPDATE: u16 = 26;
+pub const CAPSETTYPE_LARGE_POINTER: u16 = 27;
+pub const CAPSETTYPE_SURFACE_COMMANDS: u16 = 28;
+pub const CAPSETTYPE_FRAME_ACKNOWLEDGE: u16 = 30;
+
+/// TS_MULTIFRAGMENTUPDATE_CAPABILITYSET (2.2.7.2.6).
+pub fn multifragment_caps() -> Vec<u8> {
+    let mut d = BytesMut::new();
+    d.put_u32_le(0x0009_482b); // MaxRequestSize
+    capability_set(CAPSETTYPE_MULTIFRAGMENTUPDATE, &d)
+}
+
+/// TS_LARGE_POINTER_CAPABILITYSET (2.2.7.2.7).
+pub fn large_pointer_caps() -> Vec<u8> {
+    let mut d = BytesMut::new();
+    d.put_u16_le(0x0003); // LARGE_POINTER_FLAG_96x96 | LARGE_POINTER_FLAG_384x384
+    capability_set(CAPSETTYPE_LARGE_POINTER, &d)
+}
+
+/// TS_SURFCMDS_CAPABILITYSET (2.2.9.2.1).
+pub fn surface_commands_caps() -> Vec<u8> {
+    let mut d = BytesMut::new();
+    // SURFCMDS_SETSURFACEBITS | SURFCMDS_FRAMEMARKER | SURFCMDS_STREAMSURFACEBITS
+    d.put_u32_le(0x02 | 0x10 | 0x40);
+    d.put_u32_le(0); // reserved
+    capability_set(CAPSETTYPE_SURFACE_COMMANDS, &d)
+}
+
+/// TS_FRAME_ACKNOWLEDGE_CAPABILITYSET ([MS-RDPRFX] 2.2.1.3) — max unacked frames.
+pub fn frame_acknowledge_caps() -> Vec<u8> {
+    let mut d = BytesMut::new();
+    d.put_u32_le(2); // maxUnacknowledgedFrameCount
+    capability_set(CAPSETTYPE_FRAME_ACKNOWLEDGE, &d)
+}
 
 /// Frame one capability set: type, total length (incl. 4-byte header), data.
 pub fn capability_set(cap_type: u16, data: &[u8]) -> Vec<u8> {
@@ -27,24 +159,25 @@ pub fn capability_set(cap_type: u16, data: &[u8]) -> Vec<u8> {
 /// TS_GENERAL_CAPABILITYSET (2.2.7.1.1).
 pub fn general_caps() -> Vec<u8> {
     let mut d = BytesMut::new();
-    d.put_u16_le(1); // osMajorType = WINDOWS
-    d.put_u16_le(3); // osMinorType = WINDOWS NT
+    d.put_u16_le(4); // osMajorType = UNIX
+    d.put_u16_le(7); // osMinorType
     d.put_u16_le(0x0200); // protocolVersion
     d.put_u16_le(0); // pad2octetsA
     d.put_u16_le(0); // generalCompressionTypes
-    d.put_u16_le(0); // extraFlags (FASTPATH_OUTPUT etc. set later)
+    // FASTPATH_OUTPUT | NO_BITMAP_COMPRESSION_HDR | LONG_CREDENTIALS | ENC_SALTED_CHECKSUM | AUTORECONNECT
+    d.put_u16_le(0x0001 | 0x0400 | 0x0004 | 0x0008 | 0x0010);
     d.put_u16_le(0); // updateCapabilityFlag
     d.put_u16_le(0); // remoteUnshareFlag
     d.put_u16_le(0); // generalCompressionLevel
-    d.put_u8(0); // refreshRectSupport
-    d.put_u8(0); // suppressOutputSupport
+    d.put_u8(1); // refreshRectSupport
+    d.put_u8(1); // suppressOutputSupport
     capability_set(CAPSTYPE_GENERAL, &d)
 }
 
 /// TS_BITMAP_CAPABILITYSET (2.2.7.1.2).
 pub fn bitmap_caps(width: u16, height: u16) -> Vec<u8> {
     let mut d = BytesMut::new();
-    d.put_u16_le(0x0018); // preferredBitsPerPixel = 24
+    d.put_u16_le(32); // preferredBitsPerPixel = 32 (matches the 32bpp session from WANT_32BPP)
     d.put_u16_le(1); // receive1BitPerPixel
     d.put_u16_le(1); // receive4BitsPerPixel
     d.put_u16_le(1); // receive8BitsPerPixel
@@ -54,7 +187,7 @@ pub fn bitmap_caps(width: u16, height: u16) -> Vec<u8> {
     d.put_u16_le(1); // desktopResizeFlag
     d.put_u16_le(1); // bitmapCompressionFlag
     d.put_u8(0); // highColorFlags
-    d.put_u8(0); // drawingFlags
+    d.put_u8(0x0a); // drawingFlags = DRAW_ALLOW_DYNAMIC_COLOR_FIDELITY | DRAW_ALLOW_SKIP_ALPHA
     d.put_u16_le(1); // multipleRectangleSupport
     d.put_u16_le(0); // pad2octetsB
     capability_set(CAPSTYPE_BITMAP, &d)
@@ -64,16 +197,16 @@ pub fn bitmap_caps(width: u16, height: u16) -> Vec<u8> {
 pub fn pointer_caps() -> Vec<u8> {
     let mut d = BytesMut::new();
     d.put_u16_le(1); // colorPointerFlag
-    d.put_u16_le(20); // colorPointerCacheSize
-    d.put_u16_le(21); // pointerCacheSize
+    d.put_u16_le(25); // colorPointerCacheSize
+    d.put_u16_le(25); // pointerCacheSize
     capability_set(CAPSTYPE_POINTER, &d)
 }
 
 /// TS_INPUT_CAPABILITYSET (2.2.7.1.6).
 pub fn input_caps(keyboard_layout: u32) -> Vec<u8> {
     let mut d = BytesMut::new();
-    // INPUT_FLAG_SCANCODES | INPUT_FLAG_MOUSEX | INPUT_FLAG_UNICODE | INPUT_FLAG_FASTPATH_INPUT2
-    d.put_u16_le(0x0001 | 0x0100 | 0x0004 | 0x0020);
+    // SCANCODES | MOUSEX | FASTPATH_INPUT | FASTPATH_INPUT2 | MOUSE_HWHEEL | QOE_TIMESTAMPS (0x032d, matches mstsc/FreeRDP)
+    d.put_u16_le(0x032d);
     d.put_u16_le(0); // pad2octetsA
     d.put_u32_le(keyboard_layout);
     d.put_u32_le(4); // keyboardType
@@ -86,32 +219,38 @@ pub fn input_caps(keyboard_layout: u32) -> Vec<u8> {
 /// TS_ORDER_CAPABILITYSET (2.2.7.1.3) with no drawing orders enabled — the server
 /// then falls back to bitmap updates, which a bitmap-only client can render.
 pub fn order_caps() -> Vec<u8> {
-    let mut d = BytesMut::new();
-    d.extend_from_slice(&[0u8; 16]); // terminalDescriptor
-    d.put_u32_le(0); // pad4octetsA
-    d.put_u16_le(1); // desktopSaveXGranularity
-    d.put_u16_le(20); // desktopSaveYGranularity
-    d.put_u16_le(0); // pad2octetsA
-    d.put_u16_le(1); // maximumOrderLevel
-    d.put_u16_le(0); // numberFonts
-    d.put_u16_le(0x0022); // orderFlags: NEGOTIATEORDERSUPPORT | ZEROBOUNDSDELTASSUPPORT
-    d.extend_from_slice(&[0u8; 32]); // orderSupport (none)
-    d.put_u16_le(0); // textFlags
-    d.put_u16_le(0); // orderSupportExFlags
-    d.put_u32_le(0); // pad4octetsB
-    d.put_u32_le(230400); // desktopSaveSize
-    d.put_u16_le(0); // pad2octetsC
-    d.put_u16_le(0); // pad2octetsD
-    d.put_u16_le(0); // textANSICodePage
-    d.put_u16_le(0); // pad2octetsE
-    capability_set(CAPSTYPE_ORDER, &d)
+    // Exact body a normal client (FreeRDP/mstsc) sends: orderFlags 0x00AA, the
+    // standard primary-order support array (DSTBLT/PATBLT/SCRBLT/MEMBLT/… enabled),
+    // textFlags, desktopSaveSize, and textANSICodePage.
+    let body: [u8; 84] = [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // terminalDescriptor
+        0, 0, 0, 0, // pad4octetsA
+        0x01, 0x00, // desktopSaveXGranularity
+        0x14, 0x00, // desktopSaveYGranularity
+        0x00, 0x00, // pad2octetsA
+        0x01, 0x00, // maximumOrderLevel
+        0x00, 0x00, // numberFonts
+        0xaa, 0x00, // orderFlags
+        // orderSupport (32): indexes 0,1,2,7,16,20 enabled
+        0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x04, 0x00, // textFlags
+        0x00, 0x00, // orderSupportExFlags
+        0x00, 0x00, 0x00, 0x00, // pad4octetsB
+        0x00, 0x84, 0x03, 0x00, // desktopSaveSize = 0x00038400 = 230400
+        0x00, 0x00, // pad2octetsC
+        0x00, 0x00, // pad2octetsD
+        0xe9, 0xfd, // textANSICodePage
+        0x00, 0x00, // pad2octetsE
+    ];
+    capability_set(CAPSTYPE_ORDER, &body)
 }
 
 /// TS_VIRTUALCHANNEL_CAPABILITYSET (2.2.7.1.10).
 pub fn virtual_channel_caps() -> Vec<u8> {
     let mut d = BytesMut::new();
     d.put_u32_le(0); // flags: VCCAPS_NO_COMPR
-    d.put_u32_le(0); // VCChunkSize
+    d.put_u32_le(1600); // VCChunkSize (CHANNEL_CHUNK_LENGTH)
     capability_set(CAPSTYPE_VIRTUALCHANNEL, &d)
 }
 

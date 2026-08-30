@@ -27,9 +27,11 @@ pub struct BitmapRect {
 
 /// Parse a (fast-path) bitmap update body: numberRectangles + TS_BITMAP_DATA[].
 pub fn parse_bitmap_update(mut buf: &[u8]) -> Result<Vec<BitmapRect>> {
-    if buf.len() < 2 {
-        return Err(Error::Short { need: 2, have: buf.len() });
+    if buf.len() < 4 {
+        return Err(Error::Short { need: 4, have: buf.len() });
     }
+    // TS_UPDATE_BITMAP_DATA starts with updateType (0x0001 = BITMAP); skip it.
+    let _update_type = buf.get_u16_le();
     let count = buf.get_u16_le() as usize;
     let mut rects = Vec::with_capacity(count);
     for _ in 0..count {
@@ -113,13 +115,18 @@ pub fn to_rgba(pixels: &[u8], width: usize, height: usize, bpp: u16) -> Result<V
 
 /// Decode one bitmap rectangle and blit it into the framebuffer.
 pub fn apply(fb: &mut Framebuffer, rect: &BitmapRect) -> Result<()> {
-    let pixels = if rect.compressed {
-        super::rle::decompress(&rect.data, rect.width as usize, rect.height as usize, rect.bits_per_pixel)?
+    let (w, h) = (rect.width as usize, rect.height as usize);
+    // 32bpp compressed bitmaps use the RDP 6.0 planar codec (top-down RGBA);
+    // ≤24bpp compressed use interleaved RLE (bottom-up native pixels).
+    let rgba = if rect.compressed && rect.bits_per_pixel == 32 {
+        super::planar::decode(&rect.data, w, h)?
+    } else if rect.compressed {
+        let pixels = super::rle::decompress(&rect.data, w, h, rect.bits_per_pixel)?;
+        to_rgba(&pixels, w, h, rect.bits_per_pixel)?
     } else {
-        rect.data.clone()
+        to_rgba(&rect.data, w, h, rect.bits_per_pixel)?
     };
-    let rgba = to_rgba(&pixels, rect.width as usize, rect.height as usize, rect.bits_per_pixel)?;
-    fb.blit_rgba(rect.dest_left as usize, rect.dest_top as usize, rect.width as usize, rect.height as usize, &rgba);
+    fb.blit_rgba(rect.dest_left as usize, rect.dest_top as usize, w, h, &rgba);
     Ok(())
 }
 
@@ -130,6 +137,7 @@ mod tests {
 
     fn make_rect_bytes(w: u16, h: u16, bpp: u16, pixels: &[u8]) -> Vec<u8> {
         let mut b = BytesMut::new();
+        b.put_u16_le(1); // updateType = BITMAP
         b.put_u16_le(1); // numberRectangles
         b.put_u16_le(0); // destLeft
         b.put_u16_le(0); // destTop
@@ -179,6 +187,7 @@ mod tests {
         // | NO_BITMAP_COMPRESSION_HDR so there's no TS_CD_HEADER to skip.
         let rle = [0x64u8, 0x00, 0xF8]; // COLOR_RUN len 4, red
         let mut b = BytesMut::new();
+        b.put_u16_le(1); // updateType = BITMAP
         b.put_u16_le(1); // numberRectangles
         b.put_u16_le(0);
         b.put_u16_le(0);

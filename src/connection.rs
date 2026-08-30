@@ -157,13 +157,34 @@ pub fn wait_for_demand_active<T: PduTransport>(t: &mut T) -> Result<DemandActive
 
 /// Reply to the server's Demand Active with our capability set.
 pub fn send_confirm_active<T: PduTransport>(t: &mut T, user_id: u16, share_id: u32, cfg: &SessionConfig) -> Result<()> {
+    use crate::caps::{
+        activation_caps, bitmap_cache_rev2_caps, bitmap_codecs_caps, brush_caps, color_cache_caps, control_caps,
+        font_caps, frame_acknowledge_caps, glyph_cache_caps, large_pointer_caps, multifragment_caps, offscreen_caps,
+        sound_caps, surface_commands_caps,
+    };
+    // The full standard capability set — a Windows server rejects a session with
+    // ERRINFO_BAD_CAPABILITIES (0x10EA) if required sets are absent.
     let mut caps = vec![
         general_caps(),
         bitmap_caps(cfg.width, cfg.height),
         order_caps(),
+        bitmap_cache_rev2_caps(),
+        color_cache_caps(),
+        activation_caps(),
+        control_caps(),
         pointer_caps(),
-        input_caps(0x0000_0409),
         share_caps(),
+        input_caps(0x0000_0409),
+        sound_caps(),
+        font_caps(),
+        brush_caps(),
+        glyph_cache_caps(),
+        offscreen_caps(),
+        multifragment_caps(),
+        large_pointer_caps(),
+        surface_commands_caps(),
+        bitmap_codecs_caps(),
+        frame_acknowledge_caps(),
     ];
     if !cfg.channels.is_empty() {
         caps.push(virtual_channel_caps());

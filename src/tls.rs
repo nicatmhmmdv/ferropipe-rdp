@@ -86,6 +86,25 @@ impl TlsTransport {
         read_der_tlv(&mut self.stream)
     }
 
+    /// Diagnostic: briefly check whether the peer is still connected and quiet
+    /// (i.e. waiting for the next client PDU) vs. has closed/reset the channel.
+    pub fn probe(&mut self) -> String {
+        if self.stream.sock.set_read_timeout(Some(std::time::Duration::from_millis(400))).is_err() {
+            return "probe: cannot set timeout".into();
+        }
+        let mut buf = [0u8; 32];
+        let result = match self.stream.read(&mut buf) {
+            Ok(0) => "peer closed (clean EOF)".to_string(),
+            Ok(n) => format!("peer sent {n} bytes unexpectedly: {:02x?}", &buf[..n.min(16)]),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {
+                "alive & quiet (waiting for client)".to_string()
+            }
+            Err(e) => format!("peer error: {e}"),
+        };
+        let _ = self.stream.sock.set_read_timeout(None);
+        result
+    }
+
     /// Write a raw byte blob over the TLS channel (used by NLA).
     pub fn write_raw(&mut self, data: &[u8]) -> Result<()> {
         self.stream.write_all(data)?;

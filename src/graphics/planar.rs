@@ -42,11 +42,16 @@ pub fn decode(data: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
         return Ok(rgba);
     }
 
-    if format & CS_FLAG != 0 || format & CLL_MASK != 0 {
-        return Err(Error::Protocol("planar YCoCg/subsampled mode not supported"));
-    }
+    let cll = (format & CLL_MASK) as u32;
+    let cs = format & CS_FLAG != 0;
     let has_alpha = format & NA_FLAG == 0;
     let rle = format & RLE_FLAG != 0;
+
+    // AYCoCg color space (lossy / chroma-subsampled): decode A,Y,Co,Cg planes and
+    // run the inverse YCoCg transform.
+    if cll != 0 || cs {
+        return decode_aycocg(data, width, height, cll, cs, has_alpha, rle);
+    }
 
     let mut cursor = 1usize;
     let plane = |cursor: &mut usize| -> Result<Vec<u8>> {
@@ -75,6 +80,58 @@ pub fn decode(data: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
         rgba[i * 4 + 1] = green[i];
         rgba[i * 4 + 2] = blue[i];
         rgba[i * 4 + 3] = alpha.as_ref().map(|a| a[i]).unwrap_or(0xFF);
+    }
+    Ok(rgba)
+}
+
+/// Decode a plane (RAW or RLE) of `w*h` bytes at `cursor`.
+fn read_plane(data: &[u8], cursor: &mut usize, w: usize, h: usize, rle: bool) -> Result<Vec<u8>> {
+    if rle {
+        decode_rle_plane(data, cursor, w, h)
+    } else {
+        let need = w * h;
+        if data.len() < *cursor + need {
+            return Err(Error::Short { need: *cursor + need, have: data.len() });
+        }
+        let p = data[*cursor..*cursor + need].to_vec();
+        *cursor += need;
+        Ok(p)
+    }
+}
+
+/// Decode the AYCoCg planar variant (lossy / chroma-subsampled) into top-down RGBA.
+fn decode_aycocg(data: &[u8], width: usize, height: usize, cll: u32, cs: bool, has_alpha: bool, rle: bool) -> Result<Vec<u8>> {
+    let mut cursor = 1usize;
+    let alpha = if has_alpha { Some(read_plane(data, &mut cursor, width, height, rle)?) } else { None };
+    let y_plane = read_plane(data, &mut cursor, width, height, rle)?;
+
+    let (cw, ch) = if cs { (width.div_ceil(2), height.div_ceil(2)) } else { (width, height) };
+    let co_s = read_plane(data, &mut cursor, cw, ch, rle)?;
+    let cg_s = read_plane(data, &mut cursor, cw, ch, rle)?;
+
+    // Upsample chroma (nearest 2x2) when subsampled.
+    let sample = |plane: &[u8], x: usize, y: usize| -> i32 {
+        let (sx, sy) = if cs { (x / 2, y / 2) } else { (x, y) };
+        plane[sy.min(ch - 1) * cw + sx.min(cw - 1)] as i8 as i32
+    };
+
+    let mut rgba = vec![0u8; width * height * 4];
+    for y in 0..height {
+        for x in 0..width {
+            let i = y * width + x;
+            let yy = y_plane[i] as i32;
+            let co = sample(&co_s, x, y) << cll;
+            let cg = sample(&cg_s, x, y) << cll;
+            // Inverse YCoCg. The color planes carry B in the +Co axis and R in the
+            // -Co axis for RDP's 32bpp (BGRX) surfaces, so R/B are assigned accordingly.
+            let r = (yy - co - cg).clamp(0, 255) as u8;
+            let g = (yy + cg).clamp(0, 255) as u8;
+            let b = (yy + co - cg).clamp(0, 255) as u8;
+            rgba[i * 4] = r;
+            rgba[i * 4 + 1] = g;
+            rgba[i * 4 + 2] = b;
+            rgba[i * 4 + 3] = alpha.as_ref().map(|a| a[i]).unwrap_or(0xFF);
+        }
     }
     Ok(rgba)
 }
@@ -161,21 +218,26 @@ mod tests {
     }
 
     #[test]
-    fn raw_planes_with_alpha() {
-        let mut data = vec![0x00 | RLE_FLAG & 0]; // format 0x00 would be the shortcut
-        // Use a non-shortcut lossless ARGB raw header: only meaningful bits are 0,
-        // but 0x00 is the uncompressed shortcut — use NA clear via a distinct value.
-        // A lossless ARGB raw plane stream uses FormatHeader with all flags clear
-        // EXCEPT it must not be 0x00; the encoder signals raw ARGB with header 0x00
-        // only for the 32bpp shortcut, so here we exercise the A,R,G,B raw path via
-        // the RLE=0, NA=0 header value 0x00 is reserved — test the NA path instead.
-        data.clear();
-        data.push(NA_FLAG); // no-alpha raw already covered; assert alpha default
-        data.extend_from_slice(&[1]); // R
-        data.extend_from_slice(&[2]); // G
-        data.extend_from_slice(&[3]); // B
+    fn raw_planes_default_alpha() {
+        // NA (no-alpha) raw ARGB path: R,G,B planes, alpha defaults to 0xFF.
+        let data = vec![NA_FLAG, 1 /*R*/, 2 /*G*/, 3 /*B*/];
         let rgba = decode(&data, 1, 1).unwrap();
         assert_eq!(rgba, [1, 2, 3, 255]);
+    }
+
+    #[test]
+    fn aycocg_lossless_decodes() {
+        // CS=0, CLL=0 but AYCoCg (via a nonzero-CLL-like path is CLL>0); use CS to
+        // exercise the YCoCg branch with a 2x2 tile whose chroma is neutral (0),
+        // so RGB == Y for every pixel (a gray tile).
+        let mut d = vec![NA_FLAG | CS_FLAG]; // no alpha, chroma-subsampled, raw
+        d.extend_from_slice(&[100, 110, 120, 130]); // Y plane 2x2
+        d.push(0); // Co (1x1 subsampled)
+        d.push(0); // Cg (1x1 subsampled)
+        let rgba = decode(&d, 2, 2).unwrap();
+        // neutral chroma → gray = Y
+        assert_eq!(&rgba[0..4], &[100, 100, 100, 255]);
+        assert_eq!(&rgba[4..8], &[110, 110, 110, 255]);
     }
 
     #[test]
