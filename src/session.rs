@@ -157,6 +157,15 @@ impl RdpSession {
 
 /// Run the CredSSP/NTLMv2 exchange over the TLS channel.
 fn run_nla(transport: &mut TlsTransport, params: &SessionParams) -> Result<()> {
+    // Bound the reads: a peer that accepts TCP+TLS but never completes CredSSP
+    // must fail here rather than pinning the session thread forever.
+    transport.set_read_timeout(Some(std::time::Duration::from_secs(20)));
+    let result = run_nla_inner(transport, params);
+    transport.set_read_timeout(None); // restore blocking for the session phases
+    result
+}
+
+fn run_nla_inner(transport: &mut TlsTransport, params: &SessionParams) -> Result<()> {
     let mut nla = CredSspClient::new(
         &params.domain,
         &params.username,

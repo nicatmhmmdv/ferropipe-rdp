@@ -11,8 +11,16 @@ use crate::nego::{NegotiationRequest, NegotiationResponse, SecurityProtocol};
 use crate::x224::{ConnectionConfirm, ConnectionRequest};
 use crate::{tpkt, x224, Error, Result};
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
+use std::time::Duration;
+
+/// Bound the TCP connect so an unreachable/blackholed host fails in seconds
+/// rather than blocking a session thread for the OS default (often minutes).
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+/// Bound the pre-session handshake reads/writes (X.224 + TLS, and NLA when the
+/// caller opts in) so a half-open peer can't wedge the thread forever.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// A TLS-wrapped RDP transport.
 pub struct TlsTransport {
@@ -26,8 +34,17 @@ impl TlsTransport {
     /// capture the server's public key. `requested` is the OR of the protocols
     /// we offer (typically `SSL | HYBRID`).
     pub fn connect(addr: &str, requested: u32, cookie: Option<String>) -> Result<TlsTransport> {
-        let mut tcp = TcpStream::connect(addr)?;
+        // Resolve and connect with a bounded timeout so an unreachable host can't
+        // pin the calling (session) thread indefinitely when its window is closed.
+        let sockaddr = addr
+            .to_socket_addrs()?
+            .next()
+            .ok_or(Error::Protocol("could not resolve host address"))?;
+        let mut tcp = TcpStream::connect_timeout(&sockaddr, CONNECT_TIMEOUT)?;
         tcp.set_nodelay(true).ok();
+        // Bound the handshake phase; cleared to blocking before the session runs.
+        tcp.set_read_timeout(Some(HANDSHAKE_TIMEOUT)).ok();
+        tcp.set_write_timeout(Some(HANDSHAKE_TIMEOUT)).ok();
 
         // X.224 Connection Request with the RDP negotiation request.
         let cr = ConnectionRequest {
@@ -62,6 +79,10 @@ impl TlsTransport {
             }
         }
         let stream = rustls::StreamOwned::new(conn, tcp);
+        // Restore blocking mode: the session phases (MCS, finalization, steady
+        // state) manage their own per-read timeouts and expect blocking reads.
+        stream.sock.set_read_timeout(None).ok();
+        stream.sock.set_write_timeout(None).ok();
 
         let server_public_key = stream
             .conn
@@ -103,6 +124,12 @@ impl TlsTransport {
         };
         let _ = self.stream.sock.set_read_timeout(None);
         result
+    }
+
+    /// Set (or clear) the read timeout on the underlying socket. Used to bound
+    /// the NLA exchange so a half-open peer can't wedge the session thread.
+    pub fn set_read_timeout(&mut self, timeout: Option<std::time::Duration>) {
+        self.stream.sock.set_read_timeout(timeout).ok();
     }
 
     /// Write a raw byte blob over the TLS channel (used by NLA).
