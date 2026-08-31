@@ -119,13 +119,10 @@ impl RdpSession {
     /// TCP channel.
     pub fn pump(&mut self) -> Result<bool> {
         self.display.dirty = false;
-        if let Some(tunnel) = &mut self.udp {
-            // Graphics ride the UDP tunnel as tunneled fast-path PDUs.
-            let pdu = tunnel.recv_pdu()?;
-            let updates = parse_output_pdu(&pdu)?;
-            self.display.apply_all(&updates)?;
-            return Ok(self.display.dirty);
-        }
+        // The main channel stays authoritative for the session (input responses,
+        // keepalives, and graphics) until a DRDYNVC soft-sync migrates the
+        // graphics channel onto the established UDP tunnel. Draining that tunnel
+        // is handled separately so an idle tunnel can't stall the session.
         match self.transport.poll_frame(std::time::Duration::from_millis(50))? {
             Some(Frame::FastPath(pdu)) => {
                 let updates = parse_output_pdu(&pdu)?;
