@@ -31,9 +31,13 @@ impl UdpTunnel {
         // 1-2. Open the reliable RDP-UDP transport (cookieHash in the SYN) and wrap
         //      it as a byte stream.
         let mut transport = open_udp(request, local, peer, isn).map_err(Error::Io)?;
-        transport
-            .establish(Duration::from_secs(5))
-            .map_err(Error::Io)?;
+        let connected = transport.establish(Duration::from_secs(5)).map_err(Error::Io)?;
+        if std::env::var("FP_DUMP").is_ok() {
+            eprintln!("[udp] rdpeudp handshake connected = {connected}");
+        }
+        if !connected {
+            return Err(Error::Protocol("RDP-UDP SYN got no SYN+ACK from server"));
+        }
         let byte_stream = RdpUdpStream::new(transport);
 
         // 3. TLS over the reliable stream.

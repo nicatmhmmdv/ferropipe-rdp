@@ -50,6 +50,8 @@ pub struct Session {
     /// Joined virtual-channel IDs, in request order.
     pub channel_ids: Vec<u16>,
     pub share_id: u32,
+    /// The server's Initiate Multitransport Request, if it offered a UDP sideband.
+    pub multitransport_request: Option<crate::multitransport::InitiateRequest>,
 }
 
 /// Bound on how many stray PDUs to skip while waiting for an expected one.
@@ -60,10 +62,17 @@ pub fn establish<T: PduTransport>(t: &mut T, cfg: &SessionConfig) -> Result<Sess
     let server_net = basic_settings_exchange(t, cfg)?;
     let (user_id, channel_ids) = channel_connection(t, cfg, &server_net)?;
     send_client_info(t, user_id, cfg)?;
-    let demand = wait_for_demand_active(t)?;
+    let mut multitransport_request = None;
+    let demand = wait_for_demand_active(t, &mut multitransport_request)?;
     send_confirm_active(t, user_id, demand.share_id, cfg)?;
     finalization(t, user_id, demand.share_id)?;
-    Ok(Session { user_id, io_channel: IO_CHANNEL, channel_ids, share_id: demand.share_id })
+    Ok(Session {
+        user_id,
+        io_channel: IO_CHANNEL,
+        channel_ids,
+        share_id: demand.share_id,
+        multitransport_request,
+    })
 }
 
 /// Send MCS Connect Initial (with the GCC client data blocks) and parse the
@@ -82,7 +91,9 @@ pub fn basic_settings_exchange<T: PduTransport>(
     blocks.extend_from_slice(&client_security_data());
     blocks.extend_from_slice(&client_network_data(&cfg.channels));
     blocks.extend_from_slice(&client_cluster_data());
-    // Advertise reliable UDP multitransport so the server offers a UDP sideband.
+    // Request the MCS message channel (the multitransport request rides on it)…
+    blocks.extend_from_slice(&crate::gcc::client_msgchannel_data());
+    // …and advertise reliable UDP multitransport so the server offers a sideband.
     blocks.extend_from_slice(&crate::gcc::client_multitransport_data(
         crate::multitransport::TRANSPORTTYPE_UDPFECR | crate::multitransport::TRANSPORTTYPE_UDP_PREFERRED,
     ));
@@ -106,9 +117,13 @@ pub fn channel_connection<T: PduTransport>(
     t.send(&attach_user_request())?;
     let user_id = parse_attach_user_confirm(&t.recv()?)?;
 
-    // Join the user channel, the I/O channel, then each server-assigned vchannel.
+    // Join the user channel, the I/O channel, each server-assigned vchannel, and
+    // the MCS message channel (carries the multitransport request).
     let mut to_join = vec![user_id, IO_CHANNEL];
     to_join.extend_from_slice(&server_net.channel_ids);
+    if let Some(msg) = server_net.message_channel_id {
+        to_join.push(msg);
+    }
 
     let mut joined = Vec::new();
     for &channel in &to_join {
@@ -145,20 +160,23 @@ pub fn send_client_info<T: PduTransport>(t: &mut T, user_id: u16, cfg: &SessionC
 }
 
 /// Skip licensing / other PDUs until the server's Demand Active arrives.
-pub fn wait_for_demand_active<T: PduTransport>(t: &mut T) -> Result<DemandActive> {
+pub fn wait_for_demand_active<T: PduTransport>(
+    t: &mut T,
+    multitransport: &mut Option<crate::multitransport::InitiateRequest>,
+) -> Result<DemandActive> {
     for _ in 0..MAX_SKIP {
         let pdu = recv_on_io(t)?;
-        if std::env::var("FP_DUMP").is_ok() {
-            let head: String = pdu.iter().take(40).map(|b| format!("{b:02x}")).collect();
-            eprintln!("[wait_da] {} bytes: {head}", pdu.len());
-        }
         if let Ok((hdr, body)) = parse_share_control(&pdu) {
             if hdr.pdu_type == PDUTYPE_DEMANDACTIVE {
                 return parse_demand_active(body);
             }
             // Any other share control PDU (e.g. deactivate) is skipped.
+        } else if multitransport.is_none() {
+            // Non-share PDU: it may be the Initiate Multitransport Request.
+            if let Some(req) = crate::multitransport::InitiateRequest::detect(&pdu) {
+                *multitransport = Some(req);
+            }
         }
-        // Non-share PDUs (license, etc.) are skipped.
     }
     Err(Error::Protocol("no Demand Active PDU received"))
 }

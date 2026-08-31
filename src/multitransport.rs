@@ -45,6 +45,26 @@ impl InitiateRequest {
         Ok(InitiateRequest { request_id, requested_protocol, security_cookie })
     }
 
+    /// Detect an Initiate Multitransport Request inside a message-channel PDU.
+    /// The request fields (requestId, requestedProtocol, reserved, securityCookie)
+    /// appear at a small offset after a wrapper; scan the likely offsets and accept
+    /// the one whose requestedProtocol is a valid UDP transport type.
+    pub fn detect(pdu: &[u8]) -> Option<InitiateRequest> {
+        if std::env::var("FP_DUMP").is_ok() {
+            let hex: String = pdu.iter().map(|b| format!("{b:02x}")).collect();
+            eprintln!("[mt-req] {} bytes: {hex}", pdu.len());
+        }
+        for off in [0usize, 4] {
+            if pdu.len() >= off + 24 {
+                let proto = u16::from_le_bytes([pdu[off + 4], pdu[off + 5]]);
+                if proto == PROTOCOL_UDPFECR || proto == PROTOCOL_UDPFECL {
+                    return InitiateRequest::parse(&pdu[off..]).ok();
+                }
+            }
+        }
+        None
+    }
+
     /// The `cookieHash` to echo in the RDP-UDP v3 SYN: SHA-256 of the raw 16-byte
     /// securityCookie (no salt/prefix), per [MS-RDPEUDP] §2.2.2.9.
     pub fn cookie_hash(&self) -> [u8; 32] {

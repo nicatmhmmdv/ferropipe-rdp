@@ -197,16 +197,32 @@ pub fn parse_conference_create_response(gcc: &[u8]) -> Result<&[u8]> {
     Ok(&rest[..len])
 }
 
-/// Parsed TS_UD_SC_NET ([MS-RDPBCGR] 2.2.1.4.4): the I/O channel plus any joined
-/// virtual-channel IDs the server assigned, in request order.
+/// Client MCS message-channel request block type.
+pub const CS_MCS_MSGCHANNEL: u16 = 0xC006;
+/// Server MCS message-channel block type.
+pub const SC_MCS_MSGCHANNEL: u16 = 0x0C04;
+
+/// TS_UD_CS_MCS_MSGCHANNEL ([MS-RDPBCGR] 2.2.1.3.7) — request the MCS message
+/// channel, over which the server sends the Initiate Multitransport Request.
+pub fn client_msgchannel_data() -> Vec<u8> {
+    let mut b = BytesMut::new();
+    b.put_u32_le(0); // flags
+    ud_block(CS_MCS_MSGCHANNEL, &b)
+}
+
+/// Parsed TS_UD_SC_NET ([MS-RDPBCGR] 2.2.1.4.4) plus the optional message channel.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ServerNetworkData {
     pub io_channel_id: u16,
     pub channel_ids: Vec<u16>,
+    /// MCS message-channel id from SC_MCS_MSGCHANNEL, if the server granted one.
+    pub message_channel_id: Option<u16>,
 }
 
-/// Walk the concatenated server data blocks and extract SC_NET.
+/// Walk the concatenated server data blocks and extract SC_NET (+ message channel).
 pub fn parse_server_network_data(server_user_data: &[u8]) -> Result<ServerNetworkData> {
+    let mut out = ServerNetworkData::default();
+    let mut found_net = false;
     let mut buf = server_user_data;
     while buf.len() >= 4 {
         let block_type = u16::from_le_bytes([buf[0], buf[1]]);
@@ -215,25 +231,34 @@ pub fn parse_server_network_data(server_user_data: &[u8]) -> Result<ServerNetwor
             return Err(Error::Protocol("bad SC data block length"));
         }
         let body = &buf[4..len];
-        if block_type == SC_NET {
-            let mut b = body;
-            if b.len() < 4 {
-                return Err(Error::Short { need: 4, have: b.len() });
-            }
-            let io_channel_id = b.get_u16_le();
-            let count = b.get_u16_le() as usize;
-            let mut channel_ids = Vec::with_capacity(count);
-            for _ in 0..count {
-                if b.len() < 2 {
-                    return Err(Error::Short { need: 2, have: b.len() });
+        match block_type {
+            SC_NET => {
+                let mut b = body;
+                if b.len() < 4 {
+                    return Err(Error::Short { need: 4, have: b.len() });
                 }
-                channel_ids.push(b.get_u16_le());
+                out.io_channel_id = b.get_u16_le();
+                let count = b.get_u16_le() as usize;
+                for _ in 0..count {
+                    if b.len() < 2 {
+                        return Err(Error::Short { need: 2, have: b.len() });
+                    }
+                    out.channel_ids.push(b.get_u16_le());
+                }
+                found_net = true;
             }
-            return Ok(ServerNetworkData { io_channel_id, channel_ids });
+            SC_MCS_MSGCHANNEL if body.len() >= 2 => {
+                out.message_channel_id = Some(u16::from_le_bytes([body[0], body[1]]));
+            }
+            _ => {}
         }
         buf = &buf[len..];
     }
-    Err(Error::Protocol("SC_NET block not found"))
+    if found_net {
+        Ok(out)
+    } else {
+        Err(Error::Protocol("SC_NET block not found"))
+    }
 }
 
 #[cfg(test)]

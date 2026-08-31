@@ -30,6 +30,32 @@ fn main() {
     };
     println!("  ✓ SESSION ACTIVE");
 
+    // Phase 7: UDP multitransport leg.
+    match session.multitransport_request() {
+        Some(req) => {
+            println!(
+                "[7] UDP leg: server offered multitransport (requestId={}, protocol={:#06x})",
+                req.request_id, req.requested_protocol
+            );
+            let mut req = req;
+            if let Ok(rid) = std::env::var("FP_REQID") {
+                req.request_id = rid.parse().unwrap_or(req.request_id);
+                println!("  (override requestId → {})", req.request_id);
+            }
+            let peer: std::net::SocketAddr = format!("{}:3389", args[1]).parse().unwrap();
+            let local: std::net::SocketAddr = "0.0.0.0:0".parse().unwrap();
+            let isn = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos())
+                .unwrap_or(0x1234_5678);
+            match session.enable_udp(&req, local, peer, isn) {
+                Ok(()) => println!("  ✓ UDP TUNNEL ESTABLISHED — graphics now ride rdpeudp! is_on_udp={}", session.is_on_udp()),
+                Err(e) => println!("  ✗ UDP tunnel failed: {e}"),
+            }
+        }
+        None => println!("[7] UDP leg: server did not offer multitransport"),
+    }
+
     // Phase 5: live input. Move the mouse in a square, click, and type, while
     // pumping server frames — the session must stay alive and keep responding.
     println!("[5] live input (mouse + keyboard) for 6s…");

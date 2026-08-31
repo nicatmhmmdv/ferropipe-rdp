@@ -109,6 +109,11 @@ impl RdpSession {
         self.udp.is_some()
     }
 
+    /// The server's Initiate Multitransport Request, if it offered a UDP sideband.
+    pub fn multitransport_request(&self) -> Option<crate::multitransport::InitiateRequest> {
+        self.session.multitransport_request.clone()
+    }
+
     /// Process one inbound server frame. Returns true if the framebuffer changed.
     /// When the UDP tunnel is active, graphics are read from it; otherwise from the
     /// TCP channel.
