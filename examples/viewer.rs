@@ -15,7 +15,9 @@
 //! key, F13+) or an IME commit. A toolbar button sends Ctrl+Alt+Del.
 
 use eframe::egui;
-use ferropipe_rdp::input::{mouse_event, unicode_event, PTRFLAGS_BUTTON1, PTRFLAGS_DOWN, PTRFLAGS_MOVE};
+use ferropipe_rdp::input::{
+    mouse_event, unicode_event, PTRFLAGS_BUTTON1, PTRFLAGS_DOWN, PTRFLAGS_MOVE,
+};
 use ferropipe_rdp::keymap::egui::KeyboardBridge;
 use ferropipe_rdp::keymap::{key_event, secure_attention_sequence, KeyCode, KeyEvent};
 use ferropipe_rdp::session::{RdpSession, SessionParams};
@@ -95,7 +97,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         keyboard: KeyboardBridge::new(),
     };
     let options = eframe::NativeOptions::default();
-    eframe::run_native("ferropipe-rdp viewer", options, Box::new(|_cc| Ok(Box::new(app))))?;
+    eframe::run_native(
+        "ferropipe-rdp viewer",
+        options,
+        Box::new(|_cc| Ok(Box::new(app))),
+    )?;
     Ok(())
 }
 
@@ -120,7 +126,8 @@ impl eframe::App for Viewer {
             }
             if f.generation != self.last_generation && f.width > 0 {
                 let image = egui::ColorImage::from_rgba_unmultiplied([f.width, f.height], &f.rgba);
-                self.texture = Some(ctx.load_texture("desktop", image, egui::TextureOptions::LINEAR));
+                self.texture =
+                    Some(ctx.load_texture("desktop", image, egui::TextureOptions::LINEAR));
                 self.last_generation = f.generation;
             }
         }
@@ -138,8 +145,10 @@ impl eframe::App for Viewer {
                 events.extend(encode(secure_attention_sequence()));
             }
         });
-        let response =
-            ui.add(egui::Image::new(egui::load::SizedTexture::new(tex_id, size)).sense(egui::Sense::click_and_drag()));
+        let response = ui.add(
+            egui::Image::new(egui::load::SizedTexture::new(tex_id, size))
+                .sense(egui::Sense::click_and_drag()),
+        );
         // The desktop always owns keyboard focus, so every key is the server's.
         response.request_focus();
         ui.memory_mut(|m| m.set_focus_lock_filter(response.id, DESKTOP_EVENT_FILTER));
@@ -173,15 +182,29 @@ impl Viewer {
         let mut out = InputBatch::new();
         for event in &input.events {
             match event {
-                egui::Event::Key { key, physical_key, pressed, repeat, modifiers } => {
-                    out.extend(encode(self.keyboard.key(*key, *physical_key, *pressed, *repeat, *modifiers)));
+                egui::Event::Key {
+                    key,
+                    physical_key,
+                    pressed,
+                    repeat,
+                    modifiers,
+                } => {
+                    out.extend(encode(self.keyboard.key(
+                        *key,
+                        *physical_key,
+                        *pressed,
+                        *repeat,
+                        *modifiers,
+                    )));
                 }
                 egui::Event::ModifiersChanged(modifiers) => {
                     out.extend(encode(self.keyboard.modifiers_changed(*modifiers)));
                 }
                 egui::Event::Text(text) => {
                     if self.keyboard.text_wanted(input.modifiers) {
-                        out.extend(text.encode_utf16().flat_map(|unit| [unicode_event(unit, true), unicode_event(unit, false)]));
+                        out.extend(text.encode_utf16().flat_map(|unit| {
+                            [unicode_event(unit, true), unicode_event(unit, false)]
+                        }));
                     }
                 }
                 // egui-winit turns Ctrl+C/X/V into these instead of key events. Ctrl is
@@ -191,7 +214,9 @@ impl Viewer {
                 egui::Event::Cut => out.extend(tap(KeyCode::X)),
                 egui::Event::Paste(_) => out.extend(tap(KeyCode::V)),
                 // Never leave a modifier stuck down on the server when the window goes away.
-                egui::Event::WindowFocused(false) => out.extend(encode(self.keyboard.release_all())),
+                egui::Event::WindowFocused(false) => {
+                    out.extend(encode(self.keyboard.release_all()))
+                }
                 _ => {}
             }
         }
@@ -205,5 +230,8 @@ fn encode(events: Vec<KeyEvent>) -> impl Iterator<Item = Vec<u8>> {
 
 /// Press and release one key.
 fn tap(key: KeyCode) -> [Vec<u8>; 2] {
-    [key_event(key, true).encode(), key_event(key, false).encode()]
+    [
+        key_event(key, true).encode(),
+        key_event(key, false).encode(),
+    ]
 }
