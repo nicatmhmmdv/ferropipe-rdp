@@ -23,6 +23,7 @@ pub mod multitransport;
 pub mod nego;
 pub mod info;
 pub mod input;
+pub mod keymap;
 pub mod nla;
 pub mod pdu;
 pub mod session;

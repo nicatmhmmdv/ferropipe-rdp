@@ -58,7 +58,27 @@ session must exist over TCP before it can be migrated onto the UDP transport.
   updates → framebuffer + cursor). Verified against the graphics research spec
   (`SPEC-NOTES-graphics.md`).
 - **Phase 5 input: done & tested** — `input` (fast-path scancode/unicode/mouse
-  events + input PDU assembly).
+  events + input PDU assembly) and `keymap` (`KeyCode` physical-key enum → PC/AT
+  scan code set 1 make code with the 0xE0 `KBDFLAGS_EXTENDED` flag, `key_event`
+  press/release → `KeyEvent::encode()`, `secure_attention_sequence()` for
+  Ctrl+Alt+Del). **egui mapping: done & tested** behind the `egui` Cargo feature
+  (off by default; `egui` becomes an optional dependency) — `keymap::egui`:
+  `key_code` (egui 0.36 `Key` → `KeyCode` at its US-QWERTY position, exhaustive
+  match; `Copy`/`Cut`/`Paste`, F13+, `BrowserBack` and the ISO `IntlBackslash`
+  are `None`), `key_events` (physical key over logical, repeat = one more press),
+  `modifier_transitions` (`Modifiers` diff → left-hand Shift/Ctrl/Alt
+  press/release, presses first), and `KeyboardBridge`, the state machine that
+  keeps a modifier from reaching the server twice when egui reports it both as a
+  physical `Event::Key` (native, incl. AltGr) and in `Modifiers` (web, focus
+  gain), decides which `Event::Text` still needs a Unicode event, and releases
+  everything on focus loss. `examples/viewer.rs` is wired to it (scan codes for
+  every key, Unicode only for text no scan code carried, Ctrl+C/X/V via egui's
+  Copy/Cut/Paste events, a Ctrl+Alt+Del button). **Remaining:** the same wiring
+  in ferropipe's `native_rdp.rs`; `Pause`/`Break` (0xE1 prefix, needs
+  `KBDFLAGS_EXTENDED1`, which the fast-path encoder does not carry); ISO `<>`
+  (0x56) and JIS keys. Non-US layouts need no extra table: scancodes are
+  positions, not characters — the server applies its own layout — which is why
+  the mapping goes from the *physical* key code, never from the typed character.
 - **Phase 1 TLS transport: done** — `tls` (`TlsTransport`: X.224 negotiation, TLS
   upgrade via rustls/ring with a permissive verifier, `PduTransport` impl,
   frame-aware reads), `cert` (SubjectPublicKey extraction for NLA binding).
@@ -73,8 +93,8 @@ session must exist over TCP before it can be migrated onto the UDP transport.
 - **Phase 8 integration: done** — `session` (`RdpSession`: the full connect →
   pump → send_input orchestrator composing every layer) + `examples/viewer.rs` (an
   eframe/egui window rendering the remote desktop with mouse/keyboard).
-- **147 tests total (116 ferropipe-rdp + 31 rdpeudp), clippy clean.**
+- **202 tests total (140 ferropipe-rdp + 31 more with `--features egui` + 31 rdpeudp), clippy clean.**
 - Remaining for live interop (need a real server + display to exercise): the
   slow-path share-PDU handlers, EGFX PLANAR/H.264 codecs, DTLS + Tunnel Create for
-  the UDP sideband, and a full scancode keymap. The wire/protocol layers for every
-  phase are built and unit-tested.
+  the UDP sideband, and wiring `keymap::egui` into ferropipe itself (see Phase 5
+  above). The wire/protocol layers for every phase are built and unit-tested.

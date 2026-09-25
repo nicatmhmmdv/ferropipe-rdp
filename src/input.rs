@@ -108,6 +108,14 @@ mod tests {
     }
 
     #[test]
+    fn scancode_extended_press_and_release_set_extended_flag() {
+        let press = scancode_event(0x53, true, true); // Delete (E0 53) make
+        assert_eq!(press, vec![KBDFLAGS_EXTENDED, 0x53]);
+        let release = scancode_event(0x53, false, true); // Delete break
+        assert_eq!(release, vec![KBDFLAGS_RELEASE | KBDFLAGS_EXTENDED, 0x53]);
+    }
+
+    #[test]
     fn mouse_move_event_layout() {
         let ev = mouse_event(PTRFLAGS_MOVE, 100, 200);
         assert_eq!(ev[0], 0x20); // eventCode MOUSE = 1 → 1<<5

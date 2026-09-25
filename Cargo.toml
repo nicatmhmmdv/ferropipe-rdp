@@ -9,6 +9,10 @@ license = "MIT"
 name = "ferropipe_rdp"
 path = "src/lib.rs"
 
+[features]
+# egui 0.36 `Key`/`Modifiers` -> `keymap::KeyCode` bridge (`keymap::egui`). Off by default.
+egui = ["dep:egui"]
+
 [dependencies]
 bytes = "1"
 thiserror = "2"
@@ -20,7 +24,12 @@ rc4 = "0.1"
 sha2 = "0.10"
 rand = "0.8"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+egui = { version = "0.36.1", optional = true, default-features = false }
 
 [dev-dependencies]
 eframe = "0.36.1"
 egui = "0.36.1"
+
+[[example]]
+name = "viewer"
+required-features = ["egui"]
