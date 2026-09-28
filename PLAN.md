@@ -93,7 +93,15 @@ session must exist over TCP before it can be migrated onto the UDP transport.
 - **Phase 8 integration: done** — `session` (`RdpSession`: the full connect →
   pump → send_input orchestrator composing every layer) + `examples/viewer.rs` (an
   eframe/egui window rendering the remote desktop with mouse/keyboard).
-- **202 tests total (140 ferropipe-rdp + 31 more with `--features egui` + 31 rdpeudp), clippy clean.**
+- **Pointer + wheel (Phase 5/8 follow-ups)**: `input::wheel_event` (PTRFLAGS_WHEEL /
+  PTRFLAGS_HWHEEL, one 0x78 notch per event, negatives as 9-bit two's complement
+  with PTRFLAGS_WHEEL_NEGATIVE) and a cursor generation on `Display` /
+  `RdpSession::cursor_generation()` that bumps on every pointer-shape update
+  (new, cached — via a 25-slot pointer cache matching `caps::pointer_caps` —
+  hidden, and default → `cursor() == None`), so a presenter re-uploads lazily.
+- **211 tests total (180 ferropipe-rdp + 31 rdpeudp), clippy clean.** The
+  `keymap::egui` tests compile under plain `cargo test` too (`egui` is a
+  dev-dependency; the module is gated on `any(feature = "egui", test)`).
 - Remaining for live interop (need a real server + display to exercise): the
   slow-path share-PDU handlers, EGFX PLANAR/H.264 codecs, DTLS + Tunnel Create for
   the UDP sideband, and wiring `keymap::egui` into ferropipe itself (see Phase 5

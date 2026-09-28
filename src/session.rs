@@ -76,7 +76,10 @@ impl RdpSession {
             username: params.username.clone(),
             selected_protocol: protocol,
             // The dynamic-channel carrier for EGFX graphics.
-            channels: vec![ChannelDef { name: "drdynvc".into(), options: 0xC000_0000 }],
+            channels: vec![ChannelDef {
+                name: "drdynvc".into(),
+                options: 0xC000_0000,
+            }],
         };
         let session = establish(&mut transport, &cfg)?;
 
@@ -123,7 +126,10 @@ impl RdpSession {
         // keepalives, and graphics) until a DRDYNVC soft-sync migrates the
         // graphics channel onto the established UDP tunnel. Draining that tunnel
         // is handled separately so an idle tunnel can't stall the session.
-        match self.transport.poll_frame(std::time::Duration::from_millis(50))? {
+        match self
+            .transport
+            .poll_frame(std::time::Duration::from_millis(50))?
+        {
             Some(Frame::FastPath(pdu)) => {
                 let updates = parse_output_pdu(&pdu)?;
                 self.display.apply_all(&updates)?;
@@ -149,9 +155,17 @@ impl RdpSession {
         &self.display.framebuffer
     }
 
-    /// The cursor image + hotspot, if the server has sent one.
+    /// The current pointer shape (image + hotspot). `None` while the server
+    /// hides the pointer or wants the system default arrow, so the UI should
+    /// then show its own cursor.
     pub fn cursor(&self) -> Option<&crate::graphics::pointer::Cursor> {
         self.display.cursor.as_ref()
+    }
+
+    /// Bumped on every pointer-shape change (including to `None`); compare
+    /// against the last value seen to know when to re-upload `cursor()`.
+    pub fn cursor_generation(&self) -> u64 {
+        self.display.cursor_generation()
     }
 }
 

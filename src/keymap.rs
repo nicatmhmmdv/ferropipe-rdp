@@ -17,7 +17,9 @@
 
 use crate::input::{scancode_event, KBDFLAGS_EXTENDED, KBDFLAGS_RELEASE};
 
-#[cfg(feature = "egui")]
+// Compiled under plain `cargo test` too: `egui` is a dev-dependency, so the 31
+// egui-mapping tests must not silently disappear without `--features egui`.
+#[cfg(any(feature = "egui", test))]
 pub mod egui;
 
 /// A physical key, platform-neutral (named after the US-QWERTY position).

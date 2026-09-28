@@ -16,6 +16,13 @@ pub const KBDFLAGS_EXTENDED: u8 = 0x02;
 
 /// Mouse pointerFlags ([MS-RDPBCGR] 2.2.8.1.2.2.3).
 pub const PTRFLAGS_WHEEL: u16 = 0x0200;
+pub const PTRFLAGS_HWHEEL: u16 = 0x0400;
+pub const PTRFLAGS_WHEEL_NEGATIVE: u16 = 0x0100;
+/// The wheel rotation amount lives in the low 9 bits: bit 8 is
+/// `PTRFLAGS_WHEEL_NEGATIVE`, bits 0-7 the amount (two's complement when negative).
+pub const WHEEL_ROTATION_MASK: u16 = 0x01FF;
+/// Rotation units per wheel notch (Windows' `WHEEL_DELTA`).
+pub const WHEEL_NOTCH: u16 = 0x78;
 pub const PTRFLAGS_MOVE: u16 = 0x0800;
 pub const PTRFLAGS_DOWN: u16 = 0x8000;
 pub const PTRFLAGS_BUTTON1: u16 = 0x1000; // left
@@ -54,6 +61,22 @@ pub fn mouse_event(pointer_flags: u16, x: u16, y: u16) -> Vec<u8> {
     b.put_u16_le(x);
     b.put_u16_le(y);
     b.to_vec()
+}
+
+/// One notch of mouse-wheel rotation at the pointer position. `vertical` picks
+/// `PTRFLAGS_WHEEL` (positive = away from the user) over `PTRFLAGS_HWHEEL`
+/// (positive = to the right). `notches` is clamped to ±1: a rotation field only
+/// holds one `WHEEL_NOTCH` cleanly, so callers emit one event per notch.
+pub fn wheel_event(vertical: bool, notches: i32, x: u16, y: u16) -> Vec<u8> {
+    let axis = if vertical {
+        PTRFLAGS_WHEEL
+    } else {
+        PTRFLAGS_HWHEEL
+    };
+    // ±0x78 as a 9-bit two's complement field: -0x78 → 0x188, whose bit 8 is
+    // exactly PTRFLAGS_WHEEL_NEGATIVE.
+    let rotation = (notches.clamp(-1, 1) * i32::from(WHEEL_NOTCH)) as i16;
+    mouse_event(axis | (rotation as u16 & WHEEL_ROTATION_MASK), x, y)
 }
 
 /// An extended mouse event (buttons 4/5).
@@ -126,12 +149,46 @@ mod tests {
 
     #[test]
     fn input_pdu_wraps_events_with_count() {
-        let events = vec![scancode_event(0x1E, true, false), mouse_event(PTRFLAGS_MOVE, 1, 2)];
+        let events = vec![
+            scancode_event(0x1E, true, false),
+            mouse_event(PTRFLAGS_MOVE, 1, 2),
+        ];
         let pdu = input_pdu(&events);
         assert_eq!(pdu[0] >> 2 & 0x0f, 2); // numberEvents = 2
         assert_eq!(pdu[0] & 0x03, 0); // action = fastpath
-        // length byte then the two events
+                                      // length byte then the two events
         assert_eq!(pdu[1] as usize, pdu.len());
+    }
+
+    #[test]
+    fn wheel_event_one_notch_up_is_wheel_plus_0x78() {
+        // Arrange / Act: +1 vertical notch at (10, 20).
+        let ev = wheel_event(true, 1, 10, 20);
+        // Assert: eventCode MOUSE, pointerFlags = PTRFLAGS_WHEEL | 0x0078 (LE), then x, y.
+        assert_eq!(ev, vec![0x20, 0x78, 0x02, 0x0A, 0x00, 0x14, 0x00]);
+    }
+
+    #[test]
+    fn wheel_event_one_notch_down_sets_negative_and_twos_complement() {
+        // Arrange / Act: -1 vertical notch.
+        let ev = wheel_event(true, -1, 10, 20);
+        // Assert: PTRFLAGS_WHEEL | PTRFLAGS_WHEEL_NEGATIVE | 0x0088 (= 0x100 - 0x78).
+        assert_eq!(ev, vec![0x20, 0x88, 0x03, 0x0A, 0x00, 0x14, 0x00]);
+    }
+
+    #[test]
+    fn wheel_event_horizontal_notch_uses_hwheel_flag() {
+        // Arrange / Act: +1 horizontal notch (to the right).
+        let ev = wheel_event(false, 1, 10, 20);
+        // Assert: PTRFLAGS_HWHEEL | 0x0078.
+        assert_eq!(ev, vec![0x20, 0x78, 0x04, 0x0A, 0x00, 0x14, 0x00]);
+    }
+
+    #[test]
+    fn wheel_event_clamps_to_one_notch_per_event() {
+        // Arrange / Act / Assert: callers emit one event per notch.
+        assert_eq!(wheel_event(true, 5, 1, 2), wheel_event(true, 1, 1, 2));
+        assert_eq!(wheel_event(false, -3, 1, 2), wheel_event(false, -1, 1, 2));
     }
 
     #[test]
